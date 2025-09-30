@@ -1,0 +1,141 @@
+@using Laba.Shared.Exceptions
+@using Laba.Shared.Requests
+@using Laba.WebClient.Models
+@using Laba.WebClient.Models.Validators
+
+@inherits BaseComponent
+@page "/registration"
+
+<AuthorizeView>
+    <NotAuthorized>
+        <MudCard Width="600px" Class="mudcard" Outlined="true">
+            <MudCardHeader>
+                <CardHeaderContent>
+                    <MudText>Registration</MudText>
+                    @if (IsEverythingValid)
+                    {
+                        <MudText Color="Color.Success">Valid</MudText>
+                    }
+                    else
+                    {
+                        <MudText Color="Color.Error">Invalid</MudText>
+                    }
+                </CardHeaderContent>
+            </MudCardHeader>
+            <MudForm @ref="_form" Model="_model" Validation="@(_validator.ValidateValue)" ValidationDelay="0"
+                     Spacing="4">
+                <MudCardContent>
+                    <MudTextField T="string" Label="Username" Required="true" RequiredError="User name is required!"
+                                  InputType="InputType.Text"
+                                  Error="@IsUsernameInvalid" Immediate="true"
+                                  ErrorText="@_userNameErrorText"
+                                  @bind-Value="_model.Username" For="@(() => _model.Username)" Style="margin:2vh"/>
+                    <MudTextField T="string" Label="Email" Required="true" RequiredError="Email is required!"
+                                  InputType="InputType.Email"
+                                  Error="@IsEmailInvalid" Immediate="true"
+                                  ErrorText="@_emailErrorText"
+                                  @bind-Value="_model.Email" For="@(() => _model.Email)" Style="margin:2vh"/>
+                    <MudTextField T="string" Label="Password" Required="true" RequiredError="Password is required!"
+                                  InputType="InputType.Password" Immediate="true"
+                                  @bind-Value="_model.Password" For="@(() => _model.Password)" Style="margin:2vh"/>
+                    <MudTextField T="string" Label="Confirm Password" Required="true"
+                                  RequiredError="Password is required!"
+                                  InputType="InputType.Password"
+                                  Error="@(!_isPasswordConfirmed)" Immediate="true"
+                                  ErrorText="Password and ConfirmPassword aren't the same"
+                                  @bind-Value="_model.ConfirmPassword" For="@(() => _model.ConfirmPassword)"
+                                  Style="margin:2vh"/>
+                </MudCardContent>
+                <MudCardActions>
+                    <MudButton Variant="Variant.Filled" Color="Color.Primary"
+                               OnClick="@(async () => await OnRegistrationAsync())"
+                               Class="ml-auto" ButtonType="ButtonType.Button">
+                        Register
+                    </MudButton>
+                </MudCardActions>
+            </MudForm>
+        </MudCard>
+    </NotAuthorized>
+    <Authorized>
+        @{
+            NavTo(string.IsNullOrEmpty(ReturnUrlPath)
+                ? "/"
+                : ReturnUrlPath);
+        }
+    </Authorized>
+</AuthorizeView>
+
+@code {
+
+    [SupplyParameterFromQuery(Name = "ReturnUrl")]
+    public string ReturnUrlPath { get; set; } = "";
+
+    private MudForm _form;
+
+    private RegistrationModel _model = new();
+    private RegistrationValidator _validator;
+
+    private bool IsEverythingValid => _form.IsValid && string.IsNullOrEmpty(_userNameErrorText) && string.IsNullOrEmpty(_emailErrorText) && _isPasswordConfirmed;
+    private bool IsUsernameInvalid => !string.IsNullOrEmpty(_userNameErrorText);
+    private bool IsEmailInvalid => !string.IsNullOrEmpty(_emailErrorText);
+    private bool _isPasswordConfirmed = true;
+
+    private string _userNameErrorText = string.Empty;
+    private string _emailErrorText = string.Empty;
+
+    protected override void OnInitialized()
+    {
+        _validator = new RegistrationValidator();
+    }
+
+    private async Task OnRegistrationAsync()
+    {
+        _userNameErrorText = string.Empty;
+        _emailErrorText = string.Empty;
+
+        await _form.Validate();
+        await WriteLog(_model);
+        _isPasswordConfirmed = _model.Password.Equals(_model.ConfirmPassword);
+
+        if (!_isPasswordConfirmed)
+            return;
+
+        if (_form.IsValid == false)
+            return;
+
+        if ((await _validator.ValidateAsync(_model)).IsValid == false)
+            throw new Exception();
+
+        try
+        {
+            var task = AuthService.Register(new RegisterRequest
+            {
+                Username = _model.Username,
+                Email = _model.Email,
+                Password = _model.Password
+            });
+            await task;
+
+            if (task.IsCompletedSuccessfully)
+                NavTo("/", true);
+        }
+        catch (InvalidPropertyException ex)
+        {
+            await WriteError(ex);
+
+            if (ex.Content == null)
+                return;
+
+            switch (ex.Content.PropertyName)
+            {
+                case "username":
+                    _userNameErrorText = ex.Content.ErrorMessage;
+                    break;
+                case "email":
+                    _emailErrorText = ex.Content.ErrorMessage;
+                    break;
+            }
+        }
+    }
+
+}

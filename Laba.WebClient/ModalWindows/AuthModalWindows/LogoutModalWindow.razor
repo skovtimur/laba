@@ -1,0 +1,29 @@
+@inherits BaseComponent
+
+<MudDialog Class="modal-window">
+    <DialogContent>
+        <MudText Color="Color.Warning">Are you really sure that you wanna logout?</MudText>
+    </DialogContent>
+
+    <DialogActions>
+        <MudButton OnClick="Cancel">Cancel</MudButton>
+        <MudButton Color="Color.Primary" OnClick="@(async () => await OnLogoutAsync())">Logout</MudButton>
+    </DialogActions>
+</MudDialog>
+
+@code{
+    [CascadingParameter] private IMudDialogInstance MudDialog { get; set; }
+
+    private async Task OnLogoutAsync()
+    {
+        var task = AuthService.Logout();
+        await task;
+
+        if (task.IsCompletedSuccessfully)
+        {
+            MudDialog.Close(DialogResult.Ok(true));
+            NavTo("/", true);
+        }
+    }
+    private void Cancel() => MudDialog.Cancel();
+}

@@ -1,0 +1,30 @@
+<div class="nav-menu">
+    <AuthorizeView>
+        <NotAuthorized>
+            <MudNavMenu Style="display: flex;">
+                <MudNavLink Href="" Match="NavLinkMatch.All" Icon="@Icons.Material.Filled.Home">Home
+                </MudNavLink>
+                <MudSpacer/>
+                <MudNavLink Href="login" Match="NavLinkMatch.All" Icon="@Icons.Material.Filled.Login">Login
+                </MudNavLink>
+                <MudNavLink Href="registration" Match="NavLinkMatch.All"
+                            Icon="@Icons.Material.Filled.AppRegistration">
+                    Registration
+                </MudNavLink>
+
+            </MudNavMenu>
+        </NotAuthorized>
+
+        <Authorized>
+            <MudNavMenu Style="display: flex;">
+                <MudNavLink Href="" Match="NavLinkMatch.All" Icon="@Icons.Material.Filled.Home">Home
+                </MudNavLink>
+                <MudSpacer/>
+                <MudNavLink Href="account" Match="NavLinkMatch.All" Icon="@Icons.Material.Filled.AccountCircle">
+                    Account
+                </MudNavLink>
+
+            </MudNavMenu>
+        </Authorized>
+    </AuthorizeView>
+</div>

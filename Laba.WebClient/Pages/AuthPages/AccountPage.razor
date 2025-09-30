@@ -1,0 +1,49 @@
+@using Laba.Shared.Domain.Dtos
+@using Laba.WebClient.ModalWindows.AuthModalWindows
+@using Microsoft.AspNetCore.Authorization
+@inject IDialogService DialogService
+
+@inherits BaseComponent
+@attribute [Authorize]
+
+@page "/account"
+
+@if (_user == null)
+{
+    <div>Loading...</div>
+}
+else
+{
+    <MudCard Width="600px" Class="mudcard">
+        <MudCardHeader>@_user.Username</MudCardHeader>
+        <MudCardContent>
+            <MudText Style="margin-bottom: 1vh">@("User Id: " + _user.Id)</MudText>
+            <MudText Style="margin-bottom: 1vh">@("Email: " + _user.Email)</MudText>
+            <MudText Style="margin-bottom: 1vh">@("Date Of Birth: " + _user.CreatedAt)</MudText>
+        </MudCardContent>
+        <MudCardActions>
+            <MudIconButton
+                Variant="Variant.Filled"
+                Color="Color.Primary"
+                OnClick="OpenDialogAsync"
+                Icon="@Icons.Material.Filled.Logout">Logout
+            </MudIconButton>
+        </MudCardActions>
+    </MudCard>
+}
+
+@code {
+    private UserDtoToView? _user;
+
+    protected override async Task OnInitializedAsync()
+    {
+        _user = await AuthService.GetInfoAboutUser();
+    }
+
+    private Task OpenDialogAsync()
+    {
+        var options = new DialogOptions { CloseOnEscapeKey = true };
+        return DialogService.ShowAsync<LogoutModalWindow>("Logout Dialog", new DialogParameters(), options);
+    }
+
+}

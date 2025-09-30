@@ -1,0 +1,27 @@
+@page "/logout"
+@using Laba.WebClient.ModalWindows.AuthModalWindows
+@using Microsoft.AspNetCore.Authorization
+@inject IDialogService DialogService
+
+@attribute [Authorize]
+
+<MudCard>
+    <MudCardActions>
+        <MudIconButton
+            Variant="Variant.Filled"
+            Color="Color.Primary"
+            OnClick="OpenDialogAsync"
+            Icon="@Icons.Material.Filled.Logout">Logout
+        </MudIconButton>
+    </MudCardActions>
+</MudCard>
+
+@code {
+
+    private Task OpenDialogAsync()
+    {
+        var options = new DialogOptions { CloseOnEscapeKey = true };
+        return DialogService.ShowAsync<LogoutModalWindow>("Logout Dialog", new DialogParameters(), options);
+    }
+
+}

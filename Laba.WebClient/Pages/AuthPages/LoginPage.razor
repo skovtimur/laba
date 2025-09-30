@@ -1,0 +1,143 @@
+@using Laba.Shared.Exceptions
+@using Laba.Shared.Requests
+@using Laba.WebClient.Models
+@using Laba.WebClient.Models.Validators
+
+@inherits BaseComponent
+@page "/login"
+
+<AuthorizeView>
+    <NotAuthorized>
+        <MudCard Width="600px" Class="mudcard" Outlined="true">
+            <MudCardHeader>
+                <CardHeaderContent>
+                    <MudText>Log in</MudText>
+                    @if (IsEverythingValid)
+                    {
+                        <MudText Color="Color.Success">Valid</MudText>
+                    }
+                    else
+                    {
+                        <MudText Color="Color.Error">Invalid</MudText>
+                    }
+                </CardHeaderContent>
+            </MudCardHeader>
+            <MudForm @ref="_form" Model="_model" Validation="@(_validator.ValidateValue)" ValidationDelay="0"
+                     Spacing="4">
+                <MudCardContent>
+                    <MudTextField T="string" Label="Email" Required="true" RequiredError="Email is required!"
+                                  InputType="InputType.Email" Immediate="true"
+                                  Error="@(!IsUserExisting)" ErrorText="The user with that Email doesn't exists"
+                                  @bind-Value="_model.Email" For="@(() => _model.Email)" Style="margin:2vh"/>
+                    <MudTextField T="string" Label="Password" Required="true" RequiredError="Password is required!"
+                                  InputType="InputType.Password" Immediate="true"
+                                  Error="@(!IsPasswordRight)" ErrorText="The Password isn't right"
+
+                                  @bind-Value="_model.Password" For="@(() => _model.Password)" Style="margin:2vh"/>
+
+                    @if (_attemptsCount > 0)
+                    {
+                        <MudText
+                            Color="@(_attemptsCount >= 2 ? Color.Primary : Color.Warning)">@($"You have attempts {_attemptsCount} to write the right password")</MudText>
+                    }
+                    else
+                    {
+                        <MudText Color="Color.Error">@($"You don't have attempts, just wait a few minutes")</MudText>
+                    }
+                </MudCardContent>
+                <MudCardActions>
+                    <MudButton Variant="Variant.Filled" Color="Color.Primary"
+                               OnClick="@(async () => await OnLoginAsync())"
+                               Class="ml-auto" ButtonType="ButtonType.Button">
+                        Log in
+                    </MudButton>
+                </MudCardActions>
+            </MudForm>
+        </MudCard>
+    </NotAuthorized>
+    <Authorized>
+        @{
+            NavTo(string.IsNullOrEmpty(ReturnUrlPath)
+                ? "/"
+                : ReturnUrlPath);
+        }
+    </Authorized>
+</AuthorizeView>
+
+@code {
+
+    [SupplyParameterFromQuery(Name = "ReturnUrl")]
+    public string ReturnUrlPath { get; set; } = "";
+
+    private bool IsEverythingValid => _form.IsValid;
+
+    private MudForm _form;
+
+    private readonly LoginModel _model = new();
+    private LoginModelValidator _validator;
+    private int _attemptsCount = 3;
+
+    private string _isUserExistingErrorText = string.Empty;
+    private string _isPasswordRightErrorText = string.Empty;
+    private bool IsUserExisting => string.IsNullOrEmpty(_isUserExistingErrorText);
+    private bool IsPasswordRight => string.IsNullOrEmpty(_isPasswordRightErrorText);
+
+    protected override void OnInitialized()
+    {
+        _validator = new LoginModelValidator();
+    }
+
+    private async Task OnLoginAsync()
+    {
+        _isUserExistingErrorText = string.Empty;
+        _isPasswordRightErrorText = string.Empty;
+
+        await WriteLog(_model);
+
+        await _form.Validate();
+        await WriteLog(_model);
+
+        if (_form.IsValid == false)
+            return;
+
+        if ((await _validator.ValidateAsync(_model)).IsValid == false)
+            throw new Exception();
+
+        try
+        {
+            var task = AuthService.Login(new LoginRequest
+            {
+                Email = _model.Email,
+                Password = _model.Password
+            });
+            await task;
+
+            if (task.IsCompletedSuccessfully)
+                NavTo("/", true);
+        }
+        catch (TooManyRequestsException ex)
+        {
+            await WriteError(ex.Message);
+            _attemptsCount = 0;
+        }
+        catch (InvalidPropertyException ex)
+        {
+            await WriteError(ex.Message);
+
+            if (ex.Content != null)
+            {
+                if (ex.Content.PropertyName == "password")
+                {
+                    --_attemptsCount;
+                    _isPasswordRightErrorText = ex.Content.ErrorMessage;
+                }
+            }
+        }
+        catch (NotFoundException ex)
+        {
+            await WriteError(ex.Message);
+            _isUserExistingErrorText = ex.Content ?? "The User doesn't exist";
+        }
+    }
+
+}
