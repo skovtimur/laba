@@ -1,4 +1,6 @@
 using System.ComponentModel.DataAnnotations;
+using System.Diagnostics;
+using System.Security.Cryptography;
 using AutoMapper;
 using Laba.API.Abstract.Interfaces.RepositoryInterfaces;
 using Laba.API.Abstract.Interfaces.ServiceInterfaces;
@@ -9,8 +11,10 @@ using Laba.Shared.Domain.Models;
 using Laba.Shared.Domain.ValueObjects;
 using Laba.Shared.Extensions;
 using Laba.Shared.Requests;
+using Laba.Shared.Services;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.Extensions.Caching.Memory;
 
 namespace Laba.API.Controllers;
 
@@ -18,13 +22,14 @@ namespace Laba.API.Controllers;
 [Route("/api/auth")]
 public class AuthController(
     ILogger<AuthController> logger,
-    IAttemptServer attemptServer,
+    IAttemptServer attemptService,
     IUserRepository userRepository,
     IHash hasher,
     IMapper mapper,
     IHashVerify hashVerify,
     IJwtService jwtService,
-    ITokenRepository tokenRepository)
+    ITokenRepository tokenRepository,
+    IChallengeService challengeService)
     : ControllerBase
 {
     [HttpGet("get-info"), Authorize]
@@ -56,7 +61,7 @@ public class AuthController(
             return Conflict(new ErrorOfProperty
                 { PropertyName = "email", ErrorMessage = "The Email is already taken" });
 
-        var hashedPassword = new HashedPasswordValueObject { Password = hasher.Hash(request.Password) };
+        var hashedPassword = new HashedPasswordValueObject { Password = hasher.HashPassword(request.Password) };
         var user = UserEntity.Create(request.Username, (EmailValueObject)email, hashedPassword);
 
         if (user == null)
@@ -70,13 +75,14 @@ public class AuthController(
     [HttpPost("login"), AnonymousOnlyFilter]
     public async Task<IActionResult> Login([Required, FromForm] LoginRequest request)
     {
-        var userIp = HttpContext.Connection.RemoteIpAddress?.ToString();
+        var userIp = HttpContext.Connection.RemoteIpAddress ?? HttpContext.Connection.LocalIpAddress;
 
         if (userIp is null)
             return BadRequest("The remote IP address is invalid");
 
-        var keyInCache = $"{userIp}={request.Email}";
-        if (attemptServer.IsBlocked(keyInCache))
+        var keyInCache = $"{userIp.ToString()}={request.Email}";
+        bool isBlocked = await attemptService.IsBlocked(keyInCache);
+        if (isBlocked)
         {
             return StatusCode(StatusCodes.Status429TooManyRequests,
                 "Too many failed login attempts. Try later");
@@ -93,11 +99,12 @@ public class AuthController(
         if (user == null)
             return NotFound("The user doesn't exist");
 
-        var passwordIsRight = hashVerify.AreBothSame(str: request.Password, hashedString: user.HashedPassword.Password);
+        var passwordIsRight = hashVerify.IsPasswordRight(password: request.Password,
+            hashedPassword: user.HashedPassword);
 
         if (!passwordIsRight)
         {
-            await attemptServer.Decrement(keyInCache);
+            await attemptService.Decrement(keyInCache);
 
             return BadRequest(new ErrorOfProperty
                 { PropertyName = "password", ErrorMessage = "The password isn't right" });
@@ -107,6 +114,85 @@ public class AuthController(
         return Ok(tokens);
     }
 
+    [HttpPost("handshake/start/{email}"), AnonymousOnlyFilter]
+    public async Task<IActionResult> StartHandshake([Required] string email)
+    {
+        var emailValueObject = EmailValueObject.Create(email);
+
+        if (emailValueObject is null)
+            return BadRequest(new ErrorOfProperty
+                { PropertyName = "email", ErrorMessage = "The Email field is invalid" });
+
+        var user = await userRepository.Get(email: (EmailValueObject)emailValueObject);
+
+        if (user == null)
+            return NotFound("The user doesn't exist");
+
+        var exists = await challengeService.Exists(user.Email);
+        if (exists)
+            await challengeService.RemoveNonce(user.Email);
+
+        // Ниже генерируем Challenge и возвращаем
+        var challenge = await challengeService.CreateNonce(user.Email, user.HashedPassword);
+        return Ok(challenge);
+    }
+
+    [HttpPost("handshake/end"), AnonymousOnlyFilter]
+    public async Task<IActionResult> EndHandshake([Required, FromForm] EndHandshakeRequest request)
+    {
+        var userIp = HttpContext.Connection.RemoteIpAddress ?? HttpContext.Connection.LocalIpAddress;
+
+        if (userIp is null)
+            return BadRequest("The remote IP address is invalid");
+
+        var keyInCache = $"{userIp.ToString()}={request.Email}";
+        bool isBlocked = await attemptService.IsBlocked(keyInCache);
+        if (isBlocked)
+        {
+            return StatusCode(StatusCodes.Status429TooManyRequests,
+                "Too many failed login attempts. Try later");
+        }
+
+        var emailValueObject = EmailValueObject.Create(request.Email);
+
+        if (emailValueObject is null)
+            return BadRequest(new ErrorOfProperty
+                { PropertyName = "email", ErrorMessage = "The Email field is invalid" });
+
+        var user = await userRepository.Get(email: (EmailValueObject)emailValueObject);
+
+        if (user == null)
+            return NotFound("The user doesn't exist");
+
+        var nonce = await challengeService.GetNonce(user.Email);
+
+        // Если вызова (challenge) нету в кеше значит либо законичлось макс. время его жизни либо он был удален после успешного входа юзера  
+        if (string.IsNullOrEmpty(nonce))
+            return BadRequest(new ErrorOfProperty
+            {
+                ErrorMessage = "Handshake expired or not started",
+                PropertyName = "nonce"
+            });
+
+        var parts = user.HashedPassword.Password.Split('-');
+        var hash = Convert.FromHexString(parts[0]);
+        var response = Convert.FromHexString(request.HashedResponse);
+
+        if (hashVerify.AreHashesSame(hash, response) == false)
+        {
+            await attemptService.Decrement(keyInCache);
+            return BadRequest(new ErrorOfProperty
+            {
+                ErrorMessage = "Invalid response",
+                PropertyName = "password"
+            });
+        }
+
+        await challengeService.RemoveNonce(user.Email);
+        var tokens = await jwtService.GenerateNewTokens(user.Id, user.Username);
+
+        return Ok(tokens);
+    }
 
     [HttpPut("tokens-update/{oldRefreshToken}"), AnonymousOnlyFilter]
     public async Task<IActionResult> TokensUpdate([Required] string oldRefreshToken)

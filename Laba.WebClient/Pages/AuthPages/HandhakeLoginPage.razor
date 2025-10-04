@@ -1,17 +1,16 @@
 @using Laba.Shared.Exceptions
-@using Laba.Shared.Requests
 @using Laba.WebClient.Models
 @using Laba.WebClient.Models.Validators
 
 @inherits BaseComponent
-@page "/login"
+@page "/login-by-handshake"
 
 <AuthorizeView>
     <NotAuthorized>
         <MudCard Width="600px" Class="mudcard" Outlined="true">
             <MudCardHeader>
                 <CardHeaderContent>
-                    <MudText>Log in</MudText>
+                    <MudText>Log in by Handshake</MudText>
                     @if (IsEverythingValid)
                     {
                         <MudText Color="Color.Success">Valid</MudText>
@@ -27,11 +26,11 @@
                 <MudCardContent>
                     <MudTextField T="string" Label="Email" Required="true" RequiredError="Email is required!"
                                   InputType="InputType.Email" Immediate="true"
-                                  Error="@(!IsUserExisting)" ErrorText="The user with that Email doesn't exists"
+                                  Error="@(!IsUserExisting)" ErrorText="@(_isUserExistingErrorText)"
                                   @bind-Value="_model.Email" For="@(() => _model.Email)" Style="margin:2vh"/>
                     <MudTextField T="string" Label="Password" Required="true" RequiredError="Password is required!"
                                   InputType="InputType.Password" Immediate="true"
-                                  Error="@(!IsPasswordRight)" ErrorText="The Password isn't right"
+                                  Error="@(!IsPasswordRight)" ErrorText="@(_isPasswordRightErrorText)"
 
                                   @bind-Value="_model.Password" For="@(() => _model.Password)" Style="margin:2vh"/>
 
@@ -46,9 +45,7 @@
                     }
                 </MudCardContent>
                 <MudCardActions>
-                    <MudLink Href="/login-by-handshake" Color="Color.Primary">Log in by
-                        Handshake
-                    </MudLink>
+                    <MudLink Href="/login" Color="Color.Primary">Log in as Usual</MudLink>
                     <MudSpacer/>
                     <MudButton Variant="Variant.Filled" Color="Color.Primary"
                                OnClick="@(async () => await OnLoginAsync())"
@@ -61,18 +58,12 @@
     </NotAuthorized>
     <Authorized>
         @{
-            NavTo(string.IsNullOrEmpty(ReturnUrlPath)
-                ? "/"
-                : ReturnUrlPath);
+            NavTo("/");
         }
     </Authorized>
 </AuthorizeView>
 
 @code {
-
-    [SupplyParameterFromQuery(Name = "ReturnUrl")]
-    public string ReturnUrlPath { get; set; } = "";
-
     private bool IsEverythingValid => _form.IsValid;
 
     private MudForm _form;
@@ -109,11 +100,10 @@
 
         try
         {
-            var task = AuthService.Login(new LoginRequest
-            {
-                Email = _model.Email,
-                Password = _model.Password
-            });
+            var challenge = await AuthService.StartHandshake(_model.Email);
+            await WriteLog(challenge);
+
+            var task = AuthService.EndHandshake(challenge, _model.Email, _model.Password);
             await task;
 
             if (task.IsCompletedSuccessfully)
@@ -130,10 +120,22 @@
 
             if (ex.Content != null)
             {
-                if (ex.Content.PropertyName == "password")
+                await WriteError(ex.Content);
+
+                switch (ex.Content.PropertyName)
                 {
-                    --_attemptsCount;
-                    _isPasswordRightErrorText = ex.Content.ErrorMessage;
+                    case "password":
+                        --_attemptsCount;
+                        _isPasswordRightErrorText = ex.Content.ErrorMessage ?? "The Password isn't right";
+                        return;
+                    case "email":
+                        await WriteError("INVALID EMAIL");
+                        throw;
+                    case "nonce":
+                        await OnLoginAsync();
+                        break;
+                    default:
+                        throw;
                 }
             }
         }
@@ -142,6 +144,10 @@
             await WriteError(ex.Message);
             _isUserExistingErrorText = ex.Content ?? "The User doesn't exist";
         }
+        catch (BadRequestException ex)
+        {
+            await WriteError(ex.Message);
+            _attemptsCount = 0;
+        }
     }
-
 }

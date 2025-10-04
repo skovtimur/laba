@@ -1,4 +1,5 @@
 using System.Text;
+using System.Text.Json;
 using HealthChecks.UI.Client;
 using Laba.API.Abstract.Interfaces.RepositoryInterfaces;
 using Laba.API.Abstract.Interfaces.ServiceInterfaces;
@@ -7,6 +8,8 @@ using Laba.API.Infrastruction.Repositories;
 using Laba.API.Mapping;
 using Laba.API.Options;
 using Laba.API.Services;
+using Laba.Shared.Domain.Models;
+using Laba.Shared.Services;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.AspNetCore.Diagnostics.HealthChecks;
 using Microsoft.IdentityModel.Tokens;
@@ -38,7 +41,8 @@ string postgresConnectionString = builder.Configuration.GetConnectionString("Pos
                                   throw new NullReferenceException(
                                       "Postgres connection string is empty");
 builder.Services.AddHealthChecks()
-    .AddNpgSql(postgresConnectionString);
+    .AddNpgSql(postgresConnectionString)
+    .AddRedis("localhost:6379");
 builder.Services
     .AddHealthChecksUI(setupSettings: setup => { setup.AddHealthCheckEndpoint("My API Health", "/health"); })
     .AddInMemoryStorage();
@@ -47,20 +51,33 @@ builder.Services.Configure<JwtOptions>(builder.Configuration.GetRequiredSection(
 
 builder.Services.AddAutoMapper(x => { x.AddProfile<MainMapperProfile>(); });
 builder.Services.AddRouting();
-builder.Services.AddControllers();
+builder.Services.AddControllers()
+    .AddJsonOptions(options =>
+    {
+        options.JsonSerializerOptions.PropertyNamingPolicy = JsonNamingPolicy.CamelCase;
+        options.JsonSerializerOptions.DictionaryKeyPolicy = JsonNamingPolicy.CamelCase;
+    });
 
 builder.Services.AddCors(options =>
 {
     options.AddDefaultPolicy(policyBuilder =>
     {
-        policyBuilder.WithOrigins(
+        policyBuilder
+            .WithOrigins(
                 "http://localhost:6060",
                 "https://localhost:6060"
-            ).AllowAnyHeader()
-            .AllowAnyMethod();
+            )
+            .AllowAnyHeader()
+            .AllowAnyMethod()
+            .AllowCredentials();
     });
 });
-builder.Services.AddMemoryCache();
+
+builder.Services.AddStackExchangeRedisCache(options =>
+{
+    options.Configuration = "localhost";
+    options.InstanceName = "local";
+});
 builder.Services.AddSwaggerGen(setup =>
 {
     var jwtSecurityScheme = new OpenApiSecurityScheme
@@ -91,6 +108,7 @@ builder.Services.AddSingleton<IHash, HashService>();
 builder.Services.AddSingleton<IHashVerify, HashService>();
 builder.Services.AddSingleton(new NpsqlConnectionFactory(postgresConnectionString));
 builder.Services.AddScoped<IUserRepository, UserRepository>();
+builder.Services.AddScoped<IChallengeService, ChallengeService>();
 builder.Services.AddScoped<ITokenRepository, TokenRepository>();
 builder.Services.AddScoped<IAttemptServer, GuessPasswordAttemptServer>();
 builder.Services.AddScoped<IJwtService, JwtService>();
@@ -98,6 +116,8 @@ builder.Services.AddScoped<IJwtService, JwtService>();
 var app = builder.Build();
 
 app.UseRouting();
+
+app.UseCors();
 
 app.UseAuthentication();
 app.UseAuthorization();
@@ -114,7 +134,6 @@ else if (app.Environment.IsProduction())
     app.UseHttpsRedirection();
 }
 
-app.UseCors();
 app.UseHealthChecks("/health", new HealthCheckOptions
 {
     Predicate = _ => true,
