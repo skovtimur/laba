@@ -4,7 +4,7 @@ using Laba.Shared.Domain.Models;
 
 namespace Laba.Shared.Exceptions;
 
-public class InvalidPropertyException(
+public class ProblemOfPropertyException(
     string message,
     HttpStatusCode statusCode,
     HttpResponseHeaders? headers,

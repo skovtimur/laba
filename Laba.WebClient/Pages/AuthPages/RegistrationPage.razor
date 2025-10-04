@@ -119,7 +119,7 @@
             if (task.IsCompletedSuccessfully)
                 NavTo("/", true);
         }
-        catch (InvalidPropertyException ex)
+        catch (ProblemOfPropertyException ex)
         {
             await WriteError(ex);
 
